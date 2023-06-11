@@ -16,9 +16,9 @@ class UserModel:
 ###############################################################################
 # DATA ACCESS LAYER
 #
-# /!\ all DAL's are singletons for simplicity purpouse /!\
+# /!\ all DAL's are singletons for simplicity purpose /!\
 #
-# Those clases incapsulate ONLY technical details of how data is stored
+# Those classes incapsulates ONLY technical details of how data is stored
 #
 ###############################################################################
 
@@ -93,6 +93,7 @@ class DB:
         # actually this happen:
         # insert into users ( name, email ) values ( $1, $2 ) returning id
         if email in self.user_email_uindex:
+            # UniqueViolationError
             raise DBError("user email already registered")
         _id = len(self.users)
         user: UserT = {"id": _id, "name": name, "email": email}
@@ -108,6 +109,7 @@ class DB:
         if name:
             user["name"] = name
         if email:
+            # ofcourse we need to check if email is unique
             user["email"] = email
         return user
 
@@ -126,19 +128,34 @@ class DB:
 # * update entities by id/field and kwargs
 # in case of error always raise exception inherited from DALError
 # if data not found wil raise error
+#
+# Why not to return empty value if operation is not complete?
+# Isn't that more pythonic way?
+# Sometimes we need to pass through no only fact of error, e.x. user not
+# created or user not found. We need to pass upwards the cause of error- why
+# user can not be created. Maybe email is already registered, or maybe
+# database did not respond. Same for user- why it is not found.
+# Thats why we may use 2 options:
+# 1- use Go-like notation and always return tuple of value and error
+# 2- throw exceptions of something went wrong
+# But we do not want to throw any exception, because catching general Exception
+# is usually a bad practice. We need to specify special base exception and
+# raise it or it's chilren with specific info about error. This may help us
+# to properly handle them.
+#
 ###############################################################################
 
 
-class DALError(Exception):
+class RepositoryError(Exception):
     ...
 
 
 @dataclass(eq=False, frozen=True, slots=True)
-class DataAccessLayer:
+class UserRepository:
     """Get and set data from here. All data access are hidden here.
 
     * get arguments as simple data
-    * return Model
+    * return Model or raise RepositoryError
     """
 
     db: DB = field(default_factory=DB)
@@ -150,32 +167,33 @@ class DataAccessLayer:
         if user := self.db.get_user_by_id(user_id):
             self.cache.set_user(user)
             return UserModel(**user)
-        raise DALError("user not found")
+        raise RepositoryError("user not found")
 
     def create_user(self, name: str, email: str) -> UserModel:
         try:
             user_id: int = self.db.create_user(name, email)
         except DBError as err:
-            raise DALError from err
+            raise RepositoryError from err
         return UserModel(user_id, name, email)
 
     def update_user_by_id(
         self, user_id: int, *, name: str | None, email: str | None
     ) -> UserModel:
         if not any([name, email]):
-            raise DALError("nothing to update")
+            raise RepositoryError("nothing to update")
         try:
             user = self.db.update_user_by_id(user_id, name=name, email=email)
         except DBError as err:
-            raise DALError from err
+            raise RepositoryError from err
         self.cache.invalidate_user(user)
         return UserModel(**user)
 
 
 ###############################################################################
 #
-# EXTERNAL SERVICE
+# EXTERNAL SERVICES
 #
+# Stuff, you usually want to call inside business layer.
 ###############################################################################
 
 
@@ -218,7 +236,7 @@ class Clickstream:
 # a.k.a.
 # DOMAIN LAYER
 # a.k.a.
-# BUISNESS LOGIC LAYER
+# BUSINESS LOGIC LAYER
 #
 # this layer contain application buisness logic
 # it uses Data Access Layer to communicate with databases:
@@ -242,7 +260,8 @@ class CreateUserError(ServiceError):
     ...
 
 
-def find_cause(err: BaseException) -> str | None:
+def find_cause(err: BaseException) -> str:
+    """Look throught chain if exceptions and get root cause of error."""
     while err.__cause__ is not None:
         err = err.__cause__
     return str(err)
@@ -256,7 +275,7 @@ class UserServiceLayer:
     * in case of error always raise exception inherited from ServiceError
     """
 
-    dal: DataAccessLayer = field(default_factory=DataAccessLayer)
+    repo: UserRepository = field(default_factory=UserRepository)
     notifier: Notifier = field(default_factory=Notifier)
     databus: Databus = field(default_factory=Databus)
     clickstream: Clickstream = field(default_factory=Clickstream)
@@ -264,15 +283,15 @@ class UserServiceLayer:
     def get_user_by_id(self, user_id: int) -> UserModel:
         "raises: UsetNotFoundError"
         try:
-            return self.dal.get_user_by_id(user_id)
-        except DALError as err:
+            return self.repo.get_user_by_id(user_id)
+        except RepositoryError as err:
             raise ServiceError from err
 
     def create_user(self, name: str, email: str) -> UserModel:
         "raises: CreateUserError"
         try:
-            user = self.dal.create_user(name, email)
-        except DALError as err:
+            user = self.repo.create_user(name, email)
+        except RepositoryError as err:
             raise CreateUserError from err
         self.notifier.notify_user(user, "You are registered.")
         self.databus.send_user_registed_message(user)
@@ -284,8 +303,8 @@ class UserServiceLayer:
     ) -> UserModel:
         "raises: CreateUserError"
         try:
-            user = self.dal.update_user_by_id(user_id, name=name, email=email)
-        except DALError as err:
+            user = self.repo.update_user_by_id(user_id, name=name, email=email)
+        except RepositoryError as err:
             raise CreateUserError from err
         self.notifier.notify_user(user, "Your account is updated.")
         return user
@@ -301,13 +320,13 @@ class UserServiceLayer:
 # But we may di everything in one place, because there is no real reason
 # (at least for now) to, for example, receive HTTP request and print out
 # data to CLI. If we would like to send HTTP requests from CLI, then we may
-# definetly split.
+# definitely split.
 #
 # This layer:
 # * validate input data
 # * create all required objects for next layers
 # * call 1 method of each object
-# * contain NO BUISNESS LOGIC AT ALL <- this is crucial
+# * contain NO BUSINESS LOGIC AT ALL <- this is crucial
 # * capture possible BLL errors
 # * encode result into appropriate format (json, brief)
 #
