@@ -127,7 +127,7 @@ class DB:
 # * Model is immutable
 # * update entities by id/field and kwargs
 # in case of error always raise exception inherited from DALError
-# if data not found wil raise error
+# if data not found will raise error.
 #
 # Why not to return empty value if operation is not complete?
 # Isn't that more pythonic way?
@@ -140,7 +140,7 @@ class DB:
 # 2- throw exceptions of something went wrong
 # But we do not want to throw any exception, because catching general Exception
 # is usually a bad practice. We need to specify special base exception and
-# raise it or it's chilren with specific info about error. This may help us
+# raise it or it's children with specific info about error. This may help us
 # to properly handle them.
 #
 ###############################################################################
@@ -207,7 +207,7 @@ class Notifier:
 
 
 class Databus:
-    def send_user_registed_message(self, user: UserModel) -> None:
+    def send_user_registered_message(self, user: UserModel) -> None:
         event = f"""DATABUS:
         event: UserRegistered
         message: {asdict(user)}
@@ -217,7 +217,7 @@ class Databus:
 
 
 class Clickstream:
-    def send_user_registed_event(self, user: UserModel) -> None:
+    def send_user_registered_event(self, user: UserModel) -> None:
         event = {
             "eid": "user_register",
             "user_id": user.id,
@@ -238,7 +238,7 @@ class Clickstream:
 # a.k.a.
 # BUSINESS LOGIC LAYER
 #
-# this layer contain application buisness logic
+# this layer contain application business logic
 # it uses Data Access Layer to communicate with databases:
 # * to get data
 # * to create data
@@ -261,7 +261,7 @@ class CreateUserError(ServiceError):
 
 
 def find_cause(err: BaseException) -> str:
-    """Look throught chain if exceptions and get root cause of error."""
+    """Look through chain if exceptions and get root cause of error."""
     while err.__cause__ is not None:
         err = err.__cause__
     return str(err)
@@ -269,7 +269,7 @@ def find_cause(err: BaseException) -> str:
 
 @dataclass(eq=False, frozen=True, slots=True)
 class UserServiceLayer:
-    """Buisness logic for User entity goes here.
+    """Business logic for User entity goes here.
 
     * inputs may be any: simple or dto or model
     * in case of error always raise exception inherited from ServiceError
@@ -294,8 +294,8 @@ class UserServiceLayer:
         except RepositoryError as err:
             raise CreateUserError from err
         self.notifier.notify_user(user, "You are registered.")
-        self.databus.send_user_registed_message(user)
-        self.clickstream.send_user_registed_event(user)
+        self.databus.send_user_registered_message(user)
+        self.clickstream.send_user_registered_event(user)
         return user
 
     def update_user(
@@ -316,7 +316,7 @@ class UserServiceLayer:
 # HTTP Layer
 #
 # This layer handle input data and output data. In Hexagonal architecture,
-# this layer is splitted between two adaptors- one for input, one for output.
+# this layer is split between two adaptors- one for input, one for output.
 # But we may di everything in one place, because there is no real reason
 # (at least for now) to, for example, receive HTTP request and print out
 # data to CLI. If we would like to send HTTP requests from CLI, then we may
