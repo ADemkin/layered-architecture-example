@@ -173,7 +173,7 @@ class UserRepository:
         try:
             user_id: int = self.db.create_user(name, email)
         except DBError as err:
-            raise RepositoryError from err
+            raise RepositoryError(err)
         return UserModel(user_id, name, email)
 
     def update_user_by_id(
@@ -184,7 +184,7 @@ class UserRepository:
         try:
             user = self.db.update_user_by_id(user_id, name=name, email=email)
         except DBError as err:
-            raise RepositoryError from err
+            raise RepositoryError(err)
         self.cache.invalidate_user(user)
         return UserModel(**user)
 
@@ -260,13 +260,6 @@ class CreateUserError(ServiceError):
     ...
 
 
-def find_cause(err: BaseException) -> str:
-    """Look through chain if exceptions and get root cause of error."""
-    while err.__cause__ is not None:
-        err = err.__cause__
-    return str(err)
-
-
 @dataclass(eq=False, frozen=True, slots=True)
 class UserServiceLayer:
     """Business logic for User entity goes here.
@@ -285,14 +278,15 @@ class UserServiceLayer:
         try:
             return self.repo.get_user_by_id(user_id)
         except RepositoryError as err:
-            raise ServiceError from err
+            raise ServiceError(err)
 
     def create_user(self, name: str, email: str) -> UserModel:
         "raises: CreateUserError"
         try:
             user = self.repo.create_user(name, email)
         except RepositoryError as err:
-            raise CreateUserError from err
+            # raise CreateUserError from err
+            raise CreateUserError(err)
         self.notifier.notify_user(user, "You are registered.")
         self.databus.send_user_registered_message(user)
         self.clickstream.send_user_registered_event(user)
@@ -305,7 +299,7 @@ class UserServiceLayer:
         try:
             user = self.repo.update_user_by_id(user_id, name=name, email=email)
         except RepositoryError as err:
-            raise CreateUserError from err
+            raise CreateUserError(err)
         self.notifier.notify_user(user, "Your account is updated.")
         return user
 
@@ -360,7 +354,7 @@ class CreateUserHandler:
         try:
             user = UserServiceLayer().create_user(name=name, email=email)
         except ServiceError as err:
-            return {"error": find_cause(err)}
+            return {"error": err}
         if not user:
             return {"error": "unknown error"}
         return {"user": asdict(user)}
@@ -385,7 +379,7 @@ class GetUserHandler:
         try:
             user = UserServiceLayer().get_user_by_id(user_id)
         except ServiceError as err:
-            return {"error": find_cause(err)}
+            return {"error": err}
         return {"user": asdict(user)}
 
 
@@ -426,7 +420,7 @@ class UpdateUserHandler:
                 email=email,
             )
         except ServiceError as err:
-            return {"error": find_cause(err)}
+            return {"error": err}
         if not user:
             return {"error": "unknown error"}
         return {"user": asdict(user)}
