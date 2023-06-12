@@ -199,21 +199,14 @@ class UserRepository:
 
 class Notifier:
     def notify_user(self, user: UserModel, message: str) -> None:
-        notification = f"""
-        EMAIL: {user.email}
-        MESSAGE: Hello, {user.name}! {message}
-        """
-        print(notification)
+        msg = f"EMAIL: {user.email} MESSAGE: 'Hello, {user.name}! {message}'"
+        print(msg)
 
 
 class Databus:
     def send_user_registered_message(self, user: UserModel) -> None:
-        event = f"""DATABUS:
-        event: UserRegistered
-        message: {asdict(user)}
-        """
-        print(event)
-        # pprint(asdict(user), indent=8)
+        msg = f"DATABUS: event: UserRegistered {asdict(user)}"
+        print(msg)
 
 
 class Clickstream:
@@ -225,9 +218,7 @@ class Clickstream:
             "user_email": user.email,
             "timestamp": datetime.now().isoformat(),
         }
-        msg = f"""CLICKSTREAM:
-        event: {event}
-        """
+        msg = f"CLICKSTREAM: {event}"
         print(msg)
 
 
@@ -432,6 +423,7 @@ def main():
     payload = {"name": "Anton", "email": "demkin@avito.ru"}
     resp = CreateUserHandler().post(payload)
     print(resp)
+    print()
     payload = {"name": "Oleg", "email": "oleg@avito.ru"}
     resp = CreateUserHandler().post(payload)
     print(resp)
