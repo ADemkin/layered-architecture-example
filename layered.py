@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Any
+from typing import Any, Self
 from dataclasses import dataclass, asdict, field
 
 import orjson
@@ -76,7 +76,7 @@ class DB:
 
     @property
     def user_email_uindex(self) -> set[str]:
-        return {user["email"] for user in self.users}
+        return {str(user["email"]) for user in self.users}
 
     def get_user_by_id(self, user_id: int) -> dict | None:
         """Mimic PG: return Record or None"""
@@ -173,7 +173,7 @@ class UserRepository:
         try:
             user_id: int = self.db.create_user(name, email)
         except DBError as err:
-            raise RepositoryError(err)
+            raise RepositoryError(str(err))
         return UserModel(user_id, name, email)
 
     def update_user_by_id(
@@ -184,14 +184,13 @@ class UserRepository:
         try:
             user = self.db.update_user_by_id(user_id, name=name, email=email)
         except DBError as err:
-            raise RepositoryError(err)
+            raise RepositoryError(str(err))
         self.cache.invalidate_user(user)
         return UserModel(**user)
 
 
 ###############################################################################
-#
-# EXTERNAL SERVICES
+# Cleents
 #
 # Stuff, you usually want to call inside business layer.
 ###############################################################################
@@ -240,7 +239,9 @@ class Clickstream:
 
 
 class ServiceError(Exception):
-    ...
+    @classmethod
+    def from_repo(cls, err: Exception) -> Self:
+        return cls(str(err))
 
 
 class UserNotFoundError(ServiceError):
@@ -269,15 +270,14 @@ class UserServiceLayer:
         try:
             return self.repo.get_user_by_id(user_id)
         except RepositoryError as err:
-            raise ServiceError(err)
+            raise ServiceError.from_repo(err)
 
     def create_user(self, name: str, email: str) -> UserModel:
         "raises: CreateUserError"
         try:
             user = self.repo.create_user(name, email)
         except RepositoryError as err:
-            # raise CreateUserError from err
-            raise CreateUserError(err)
+            raise CreateUserError.from_repo(err)
         self.notifier.notify_user(user, "You are registered.")
         self.databus.send_user_registered_message(user)
         self.clickstream.send_user_registered_event(user)
@@ -290,7 +290,7 @@ class UserServiceLayer:
         try:
             user = self.repo.update_user_by_id(user_id, name=name, email=email)
         except RepositoryError as err:
-            raise CreateUserError(err)
+            raise CreateUserError.from_repo(err)
         self.notifier.notify_user(user, "Your account is updated.")
         return user
 
@@ -345,7 +345,7 @@ class CreateUserHandler:
         try:
             user = UserServiceLayer().create_user(name=name, email=email)
         except ServiceError as err:
-            return {"error": err}
+            return {"error": str(err)}
         if not user:
             return {"error": "unknown error"}
         return {"user": asdict(user)}
@@ -370,7 +370,7 @@ class GetUserHandler:
         try:
             user = UserServiceLayer().get_user_by_id(user_id)
         except ServiceError as err:
-            return {"error": err}
+            return {"error": str(err)}
         return {"user": asdict(user)}
 
 
@@ -411,13 +411,14 @@ class UpdateUserHandler:
                 email=email,
             )
         except ServiceError as err:
-            return {"error": err}
+            return {"error": str(err)}
         if not user:
             return {"error": "unknown error"}
         return {"user": asdict(user)}
 
 
 def main():
+
     print()
     print("CREATE USERS")
     payload = {"name": "Anton", "email": "demkin@avito.ru"}
@@ -473,6 +474,12 @@ def main():
     print()
     print("UPDATE USER")
     payload = {"id": 0, "email": "antondemkin@yandex.ru"}
+    resp = UpdateUserHandler().post(payload)
+    print(resp)
+
+    print()
+    print("UPDATE USER ERROR")
+    payload = {"id": 42, "email": "antondemkin@yandex.ru"}
     resp = UpdateUserHandler().post(payload)
     print(resp)
 
