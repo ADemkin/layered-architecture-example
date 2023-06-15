@@ -6,6 +6,9 @@ import orjson
 from singleton_decorator import singleton
 
 
+# TODO: make single exception
+
+
 @dataclass
 class UserModel:
     id: int
@@ -253,7 +256,7 @@ class CreateUserError(ServiceError):
 
 
 @dataclass(eq=False, frozen=True, slots=True)
-class UserServiceLayer:
+class UserService:
     """Business logic for User entity goes here.
 
     * inputs may be any: simple or dto or model
@@ -343,7 +346,7 @@ class CreateUserHandler:
         name = payload["name"]
         email = payload["email"]
         try:
-            user = UserServiceLayer().create_user(name=name, email=email)
+            user = UserService().create_user(name=name, email=email)
         except ServiceError as err:
             return {"error": str(err)}
         if not user:
@@ -368,7 +371,7 @@ class GetUserHandler:
             return {"error": error}
         user_id = payload["id"]
         try:
-            user = UserServiceLayer().get_user_by_id(user_id)
+            user = UserService().get_user_by_id(user_id)
         except ServiceError as err:
             return {"error": str(err)}
         return {"user": asdict(user)}
@@ -405,7 +408,7 @@ class UpdateUserHandler:
         name = payload.get("name")
         email = payload.get("email")
         try:
-            user = UserServiceLayer().update_user(
+            user = UserService().update_user(
                 user_id,
                 name=name,
                 email=email,
@@ -498,3 +501,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
