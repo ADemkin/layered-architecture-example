@@ -1,12 +1,35 @@
 from datetime import datetime
-from typing import Any, Self
+from typing import Any
 from dataclasses import dataclass, asdict, field
 
 import orjson
 from singleton_decorator import singleton
 
 
-# TODO: make single exception
+###############################################################################
+# ERRORS
+###############################################################################
+
+
+class ServiceError(Exception):
+    """Base exception for service.
+
+    This allow to catch service specific errors all the way up to top layer.
+    """
+
+
+class UserServiceError(ServiceError):
+    """Special exception for User part of layer.
+
+    This mean, that every entity will have it's own exception.
+
+    it is usefull to mention in all User layers.
+    """
+
+
+###############################################################################
+# MODELS
+###############################################################################
 
 
 @dataclass
@@ -32,8 +55,9 @@ class Cache:
     """Mock for Redis.
 
     * get simple data input (dict to store and int/str to get)
+    * do not raise any ServiceException
+    * if data not found may return None or raise- both are ok here
     * return simple data as dict
-
     """
 
     cache: dict[str, bytes] = field(default_factory=dict)
@@ -45,9 +69,7 @@ class Cache:
     def get_user_by_id(self, user_id: int) -> dict | None:
         key = self.get_user_key(user_id)
         if user_str := self.cache.get(key):
-            # print(f"\tREDIS: get_user_by_id {user_id} hit")
             return orjson.loads(user_str)
-        # print(f"\tREDIS: get_user_by_id {user_id} miss")
         return None
 
     def set_user(self, user: dict) -> None:
@@ -59,10 +81,6 @@ class Cache:
         self.cache.pop(key, None)
 
 
-class DBError(Exception):
-    ...
-
-
 UserT = dict[str, int | str]
 
 
@@ -71,8 +89,10 @@ UserT = dict[str, int | str]
 class DB:
     """Mock for postgres.
 
-    * get simple data input
-    * return as raw entity (dict or Record)
+    * get simple data input (dict to store and int/str to get)
+    * do not raise any ServiceException
+    * if data not found may return None or raise- both are ok here
+    * return simple data as dict or Record
     """
 
     users: list[UserT] = field(default_factory=list)
@@ -97,7 +117,7 @@ class DB:
         # insert into users ( name, email ) values ( $1, $2 ) returning id
         if email in self.user_email_uindex:
             # UniqueViolationError
-            raise DBError("user email already registered")
+            raise UserServiceError("user email already registered")
         _id = len(self.users)
         user: UserT = {"id": _id, "name": name, "email": email}
         self.users.append(user)
@@ -108,12 +128,14 @@ class DB:
     ) -> dict:
         user = self.get_user_by_id(user_id)
         if user is None:
-            raise DBError("user not found")
+            raise UserServiceError("user not found")
+        if email:
+            if email in self.user_email_uindex:
+                # UniqueViolationError
+                raise UserServiceError("email alredy registered")
+            user["email"] = email
         if name:
             user["name"] = name
-        if email:
-            # ofcourse we need to check if email is unique
-            user["email"] = email
         return user
 
 
@@ -149,10 +171,6 @@ class DB:
 ###############################################################################
 
 
-class RepositoryError(Exception):
-    ...
-
-
 @dataclass(eq=False, frozen=True, slots=True)
 class UserRepository:
     """Get and set data from here. All data access are hidden here.
@@ -170,24 +188,18 @@ class UserRepository:
         if user := self.db.get_user_by_id(user_id):
             self.cache.set_user(user)
             return UserModel(**user)
-        raise RepositoryError("user not found")
+        raise UserServiceError("user not found")
 
     def create_user(self, name: str, email: str) -> UserModel:
-        try:
-            user_id: int = self.db.create_user(name, email)
-        except DBError as err:
-            raise RepositoryError(str(err))
+        user_id: int = self.db.create_user(name, email)
         return UserModel(user_id, name, email)
 
     def update_user_by_id(
         self, user_id: int, *, name: str | None, email: str | None
     ) -> UserModel:
         if not any([name, email]):
-            raise RepositoryError("nothing to update")
-        try:
-            user = self.db.update_user_by_id(user_id, name=name, email=email)
-        except DBError as err:
-            raise RepositoryError(str(err))
+            raise UserServiceError("nothing to update")
+        user = self.db.update_user_by_id(user_id, name=name, email=email)
         self.cache.invalidate_user(user)
         return UserModel(**user)
 
@@ -241,20 +253,6 @@ class Clickstream:
 ###############################################################################
 
 
-class ServiceError(Exception):
-    @classmethod
-    def from_repo(cls, err: Exception) -> Self:
-        return cls(str(err))
-
-
-class UserNotFoundError(ServiceError):
-    ...
-
-
-class CreateUserError(ServiceError):
-    ...
-
-
 @dataclass(eq=False, frozen=True, slots=True)
 class UserService:
     """Business logic for User entity goes here.
@@ -269,18 +267,12 @@ class UserService:
     clickstream: Clickstream = field(default_factory=Clickstream)
 
     def get_user_by_id(self, user_id: int) -> UserModel:
-        "raises: UsetNotFoundError"
-        try:
-            return self.repo.get_user_by_id(user_id)
-        except RepositoryError as err:
-            raise ServiceError.from_repo(err)
+        """raises: UserServiceError"""
+        return self.repo.get_user_by_id(user_id)
 
     def create_user(self, name: str, email: str) -> UserModel:
-        "raises: CreateUserError"
-        try:
-            user = self.repo.create_user(name, email)
-        except RepositoryError as err:
-            raise CreateUserError.from_repo(err)
+        """raises: UserServiceError"""
+        user = self.repo.create_user(name, email)
         self.notifier.notify_user(user, "You are registered.")
         self.databus.send_user_registered_message(user)
         self.clickstream.send_user_registered_event(user)
@@ -289,11 +281,9 @@ class UserService:
     def update_user(
         self, user_id: int, *, name: str | None, email: str | None
     ) -> UserModel:
+        """raises: UserServiceError"""
         "raises: CreateUserError"
-        try:
-            user = self.repo.update_user_by_id(user_id, name=name, email=email)
-        except RepositoryError as err:
-            raise CreateUserError.from_repo(err)
+        user = self.repo.update_user_by_id(user_id, name=name, email=email)
         self.notifier.notify_user(user, "Your account is updated.")
         return user
 
@@ -347,7 +337,7 @@ class CreateUserHandler:
         email = payload["email"]
         try:
             user = UserService().create_user(name=name, email=email)
-        except ServiceError as err:
+        except UserServiceError as err:
             return {"error": str(err)}
         if not user:
             return {"error": "unknown error"}
@@ -372,7 +362,7 @@ class GetUserHandler:
         user_id = payload["id"]
         try:
             user = UserService().get_user_by_id(user_id)
-        except ServiceError as err:
+        except UserServiceError as err:
             return {"error": str(err)}
         return {"user": asdict(user)}
 
@@ -413,7 +403,7 @@ class UpdateUserHandler:
                 name=name,
                 email=email,
             )
-        except ServiceError as err:
+        except UserServiceError as err:
             return {"error": str(err)}
         if not user:
             return {"error": "unknown error"}
@@ -421,7 +411,6 @@ class UpdateUserHandler:
 
 
 def main():
-
     print()
     print("CREATE USERS")
     payload = {"name": "Anton", "email": "demkin@avito.ru"}
@@ -501,4 +490,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
