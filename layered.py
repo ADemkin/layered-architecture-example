@@ -132,7 +132,7 @@ class DB:
         if email:
             if email in self.user_email_uindex:
                 # UniqueViolationError
-                raise UserServiceError("email alredy registered")
+                raise UserServiceError("email already registered")
             user["email"] = email
         if name:
             user["name"] = name
@@ -205,7 +205,7 @@ class UserRepository:
 
 
 ###############################################################################
-# Cleents
+# Clents
 #
 # Stuff, you usually want to call inside business layer.
 ###############################################################################
