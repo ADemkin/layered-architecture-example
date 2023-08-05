@@ -49,6 +49,9 @@ class UserModel:
 ###############################################################################
 
 
+UserT = dict[str, int | str]
+
+
 @singleton
 @dataclass(eq=False, frozen=True, slots=True)
 class Cache:
@@ -66,22 +69,19 @@ class Cache:
     def get_user_key(user_id: int) -> str:
         return f"user_id:{user_id}"
 
-    def get_user_by_id(self, user_id: int) -> dict | None:
+    def get_user_by_id(self, user_id: int) -> UserT | None:
         key = self.get_user_key(user_id)
         if user_str := self.cache.get(key):
             return orjson.loads(user_str)
         return None
 
-    def set_user(self, user: dict) -> None:
-        key = self.get_user_key(user["id"])
+    def set_user_by_id(self, user: UserT, user_id: int) -> None:
+        key = self.get_user_key(user_id)
         self.cache[key] = orjson.dumps(user)
 
-    def invalidate_user(self, user: dict) -> None:
-        key = self.get_user_key(user["id"])
+    def invalidate_user_by_id(self, user_id: int) -> None:
+        key = self.get_user_key(user_id)
         self.cache.pop(key, None)
-
-
-UserT = dict[str, int | str]
 
 
 @singleton
@@ -101,7 +101,7 @@ class DB:
     def user_email_uindex(self) -> set[str]:
         return {str(user["email"]) for user in self.users}
 
-    def get_user_by_id(self, user_id: int) -> dict | None:
+    def get_user_by_id(self, user_id: int) -> UserT | None:
         """Mimic PG: return Record or None"""
         # actually this happen:
         # select * from users where user_id = $1
@@ -111,21 +111,21 @@ class DB:
                 return user
         return None
 
-    def create_user(self, name: str, email: str) -> int:
+    def create_user(self, name: str, email: str) -> UserT:
         """Mimic PG: return int or raise"""
         # actually this happen:
         # insert into users ( name, email ) values ( $1, $2 ) returning id
         if email in self.user_email_uindex:
             # UniqueViolationError
             raise UserServiceError("user email already registered")
-        _id = len(self.users)
-        user: UserT = {"id": _id, "name": name, "email": email}
+        user_id = len(self.users)
+        user: UserT = {"id": user_id, "name": name, "email": email}
         self.users.append(user)
-        return _id
+        return user
 
     def update_user_by_id(
         self, user_id: int, *, name: str | None, email: str | None
-    ) -> dict:
+    ) -> UserT:
         user = self.get_user_by_id(user_id)
         if user is None:
             raise UserServiceError("user not found")
@@ -186,7 +186,7 @@ class UserRepository:
         if user := self.cache.get_user_by_id(user_id):
             return UserModel(**user)
         if user := self.db.get_user_by_id(user_id):
-            self.cache.set_user(user)
+            self.cache.set_user_by_id(user, user_id)
             return UserModel(**user)
         raise UserServiceError("user not found")
 
@@ -199,8 +199,9 @@ class UserRepository:
     ) -> UserModel:
         if not any([name, email]):
             raise UserServiceError("nothing to update")
+        # prevent race condition by first update then invalidate
         user = self.db.update_user_by_id(user_id, name=name, email=email)
-        self.cache.invalidate_user(user)
+        self.cache.invalidate_user_by_id(user_id)
         return UserModel(**user)
 
 
@@ -282,7 +283,6 @@ class UserService:
         self, user_id: int, *, name: str | None, email: str | None
     ) -> UserModel:
         """raises: UserServiceError"""
-        "raises: CreateUserError"
         user = self.repo.update_user_by_id(user_id, name=name, email=email)
         self.notifier.notify_user(user, "Your account is updated.")
         return user
