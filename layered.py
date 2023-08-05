@@ -305,13 +305,18 @@ class UserService:
 # * create all required objects for next layers
 # * call 1 method of each object
 # * contain NO BUSINESS LOGIC AT ALL <- this is crucial
-# * capture possible BLL errors
-# * encode result into appropriate format (json, brief)
+# * capture possible Service layer errors
+# * encode result into appropriate format (json, xml)
 #
 ###############################################################################
 
 
-class CreateUserHandler:
+@dataclass(eq=False, frozen=True, slots=True)
+class Handler:
+    user_service: UserService = field(default_factory=UserService)
+
+
+class CreateUserHandler(Handler):
     def validate_payload(self, payload: dict) -> str | None:
         """Validate input."""
         if "name" not in payload:
@@ -336,7 +341,7 @@ class CreateUserHandler:
         name = payload["name"]
         email = payload["email"]
         try:
-            user = UserService().create_user(name=name, email=email)
+            user = self.user_service.create_user(name=name, email=email)
         except UserServiceError as err:
             return {"error": str(err)}
         if not user:
@@ -344,7 +349,7 @@ class CreateUserHandler:
         return {"user": asdict(user)}
 
 
-class GetUserHandler:
+class GetUserHandler(Handler):
     def validate_payload(self, payload: dict) -> str | None:
         """Validate input."""
         user_id = payload.get("id")
@@ -361,13 +366,13 @@ class GetUserHandler:
             return {"error": error}
         user_id = payload["id"]
         try:
-            user = UserService().get_user_by_id(user_id)
+            user = self.user_service.get_user_by_id(user_id)
         except UserServiceError as err:
             return {"error": str(err)}
         return {"user": asdict(user)}
 
 
-class UpdateUserHandler:
+class UpdateUserHandler(Handler):
     def validate_payload(self, payload: dict) -> str | None:
         """Validate input."""
         user_id = payload.get("id")
@@ -398,7 +403,7 @@ class UpdateUserHandler:
         name = payload.get("name")
         email = payload.get("email")
         try:
-            user = UserService().update_user(
+            user = self.user_service.update_user(
                 user_id,
                 name=name,
                 email=email,
