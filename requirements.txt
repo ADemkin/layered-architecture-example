@@ -1,2 +1,1 @@
 orjson
-singleton-decorator

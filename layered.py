@@ -3,7 +3,6 @@ from typing import Any
 from dataclasses import dataclass, asdict, field
 
 import orjson
-from singleton_decorator import singleton
 
 
 ###############################################################################
@@ -52,7 +51,6 @@ class UserModel:
 UserT = dict[str, int | str]
 
 
-@singleton
 @dataclass(eq=False, frozen=True, slots=True)
 class Cache:
     """Mock for Redis.
@@ -84,7 +82,6 @@ class Cache:
         self.cache.pop(key, None)
 
 
-@singleton
 @dataclass(eq=False, frozen=True, slots=True)
 class DB:
     """Mock for postgres.
